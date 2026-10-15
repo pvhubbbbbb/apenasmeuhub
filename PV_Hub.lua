@@ -37426,9 +37426,8 @@ Escape Timer: %*]]
 			end
 		end
 
-		-- Holds ONE life of the target (until the character dies/resets).
-		-- Same grab routine as the Blobman "Kick" method, but the target is held in the
-		-- air in the center while the Blobman orbits around it.
+		-- Holds ONE life of the target (until the character dies/resets): takes control of the
+		-- target like the Blobman "Bring"/"Follow" methods do, then keeps it still in the air.
 		local function HoldTarget(target, model, root, myToken, tChar, tRoot, tHum)
 			local _, myRoot, myHum = tbl12.Char()
 			if not (myRoot and myHum) then
@@ -37478,86 +37477,38 @@ Escape Timer: %*]]
 				return false
 			end
 
-			tHum.Sit = true
-			task.delay(0.5, function()
-				tHum.Sit = false
-			end)
-
-			-- bring the target up to the center point, in the air
+			-- bring the target up to the center point and keep it frozen there, in the air
 			local center = spinCenter
-			local orientCF = tRoot.CFrame - tRoot.CFrame.Position
-			tbl12.Teleport(tRoot, CFrame.new(center) * orientCF)
+			local holdCF = CFrame.new(center) * (tRoot.CFrame - tRoot.CFrame.Position)
+			tbl12.Teleport(tRoot, holdCF)
 			local align, orient = tbl12.CreateAlign(tRoot, true)
 			align.Position = center
-			orient.CFrame = orientCF
+			orient.CFrame = holdCF - holdCF.Position
+			task.spawn(tbl12.ToggleCollisions, tChar, false)
 			spinPaused = false
-
-			local firePlayerPart = tChar:FindFirstChild("FirePlayerPart")
-			local weldConstraint = firePlayerPart and firePlayerPart:FindFirstChild("WeldConstraint")
-
-			comps.CreatureDrop:FireServer(comps.RightWeld)
-			if comps.LeftWeld then
-				comps.CreatureDrop:FireServer(comps.LeftWeld)
-			end
-			task.wait(0.06)
-			rootAttachment.Parent = tChar
 
 			pcall(function()
 				while myToken == spinToken and target.Parent and tChar.Parent and tRoot.Parent and tHum.Parent and tHum.Health > 0 and model.Parent and myHum.SeatPart do
-					if not tbl12.IsNetworkOwner(tRoot) then
-						tbl12.Grab(tRoot)
-					end
-
-					task.spawn(function()
-						tHum.RequiresNeck = false
-						tbl12.ToggleMotor6D(tChar, false, true)
-						tbl12.RepositionLimbs(tChar)
-					end)
-
-					task.spawn(tbl12.ToggleCollisions, tChar, false)
+					-- the Blobman hand must NOT hold the target, otherwise it would orbit with it
 					comps.RightOri.Enabled = false
 					comps.RightWeld.Enabled = false
 					comps.RightOri.Attachment0 = nil
 					comps.RightWeld.Attachment0 = nil
+
+					-- lost control of the target? take it again
+					if not tbl12.IsNetworkOwner(tRoot) then
+						tbl12.SNO(tRoot)
+					end
+
+					tRoot.CFrame = holdCF
 					align.Position = center
 					tbl12.ResetVelocity(tRoot)
-
-					if tbl8.DeleteShurInBlobK then
-						task.spawn(tbl12.RemoveSticky, tChar)
-					end
-
-					if (tbl9.BKMethod or 1) == 1 then
-						comps.CreatureGrab:FireServer(nil, tRoot, comps.RightWeld)
-						task.wait()
-						comps.CreatureDrop:FireServer(comps.RightWeld)
-						task.wait()
-
-						if tbl8.NetworkOwnerInKick then
-							tbl12.Grab(tRoot)
-							tbl12.RNO(tRoot)
-						end
-					else
-						comps.CreatureGrab:FireServer(nil, tRoot, comps.RightWeld)
-						task.wait()
-						comps.CreatureRelease:FireServer(comps.RightWeld)
-						tbl12.Grab(tRoot)
-						task.spawn(tbl12.Ragdoll, tChar)
-
-						if weldConstraint and weldConstraint.Enabled then
-							tbl12.RNO(tRoot)
-						end
-
-						task.wait()
-					end
+					RunService.Heartbeat:Wait()
 				end
 			end)
 
 			-- cleanup
 			spinPaused = false
-			if rootAttachment and tRoot.Parent then
-				rootAttachment.Parent = tRoot
-			end
-			task.spawn(tbl12.ToggleMotor6D, tChar, true)
 			task.spawn(tbl12.ToggleCollisions, tChar, true)
 			if align then
 				align:Destroy()
