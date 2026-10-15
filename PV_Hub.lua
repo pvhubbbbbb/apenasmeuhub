@@ -37358,6 +37358,8 @@ Escape Timer: %*]]
 		local spinModel = nil
 		local spawnedByUs = false
 		local spinCenter = Vector3.zero
+		local spinPaused = false
+		local spinHome = nil
 
 		-- remember the player that was picked LAST in the Target dropdown
 		local lastPicked = nil
@@ -37388,6 +37390,7 @@ Escape Timer: %*]]
 
 		local function StopBlobSpin()
 			spinToken += 1
+			spinPaused = false
 			tbl12.SetRuntimeConnection("BlobmanSpin", RunService.Heartbeat, false)
 
 			local model = spinModel
@@ -37398,6 +37401,19 @@ Escape Timer: %*]]
 			end
 
 			spawnedByUs = false
+
+			-- go back to the place where you were when you started the spin
+			local home = spinHome
+			spinHome = nil
+
+			if home then
+				task.delay(0.2, function()
+					local _, myRoot = tbl12.Char()
+					if myRoot then
+						tbl12.Teleport(myRoot, home)
+					end
+				end)
+			end
 		end
 
 		local function GetSeatedBlobman()
@@ -37410,13 +37426,13 @@ Escape Timer: %*]]
 			end
 		end
 
+		-- Holds ONE life of the target (until the character dies/resets).
 		-- Same grab routine as the Blobman "Kick" method, but the target is held in the
-		-- center (in the air) while the Blobman orbits around it.
-		local function GrabLoop(target, model, myToken)
+		-- air in the center while the Blobman orbits around it.
+		local function HoldTarget(target, model, root, myToken, tChar, tRoot, tHum)
 			local _, myRoot, myHum = tbl12.Char()
-			local tChar, tRoot, tHum = tbl12.Char(target)
-			if not (myRoot and myHum and tChar and tRoot and tHum) then
-				return
+			if not (myRoot and myHum) then
+				return false
 			end
 
 			local comps
@@ -37430,17 +37446,36 @@ Escape Timer: %*]]
 
 			local rootAttachment = tRoot:FindFirstChild("RootAttachment")
 			if not (comps and comps.CreatureGrab and comps.CreatureDrop and comps.CreatureRelease and comps.RightWeld and comps.RightOri and rootAttachment) then
-				lib:Notify("Blobman Spin: couldn't find the Blobman grab parts")
-				return
+				return false
 			end
 
-			comps.RightWeld.Enabled = false
-			comps.RightOri.Enabled = false
+			-- stop orbiting and go right next to the target, so the grab always reaches
+			spinPaused = true
+			local gotControl = false
 
-			if not (tbl12.SNO(tRoot) or tbl14.Release(target)) then
-				comps.RightWeld.Enabled = true
-				lib:Notify("Blobman Spin: couldn't grab the target")
-				return
+			for _ = 1, 4 do
+				if myToken ~= spinToken or not tRoot.Parent then
+					break
+				end
+
+				root.CFrame = CFrame.new(tRoot.Position + Vector3.new(0, 0, 6))
+				root.AssemblyLinearVelocity = Vector3.zero
+				comps.RightWeld.Enabled = false
+				comps.RightOri.Enabled = false
+				task.wait(0.1)
+
+				if tbl12.SNO(tRoot) or tbl14.Release(target) then
+					gotControl = true
+					break
+				end
+			end
+
+			if not gotControl then
+				spinPaused = false
+				if comps.RightWeld.Parent then
+					comps.RightWeld.Enabled = true
+				end
+				return false
 			end
 
 			tHum.Sit = true
@@ -37448,12 +37483,14 @@ Escape Timer: %*]]
 				tHum.Sit = false
 			end)
 
+			-- bring the target up to the center point, in the air
 			local center = spinCenter
 			local orientCF = tRoot.CFrame - tRoot.CFrame.Position
 			tbl12.Teleport(tRoot, CFrame.new(center) * orientCF)
 			local align, orient = tbl12.CreateAlign(tRoot, true)
 			align.Position = center
 			orient.CFrame = orientCF
+			spinPaused = false
 
 			local firePlayerPart = tChar:FindFirstChild("FirePlayerPart")
 			local weldConstraint = firePlayerPart and firePlayerPart:FindFirstChild("WeldConstraint")
@@ -37516,6 +37553,7 @@ Escape Timer: %*]]
 			end)
 
 			-- cleanup
+			spinPaused = false
 			if rootAttachment and tRoot.Parent then
 				rootAttachment.Parent = tRoot
 			end
@@ -37531,6 +37569,39 @@ Escape Timer: %*]]
 				comps.RightWeld.Attachment0 = nil
 				comps.RightWeld.Enabled = true
 			end
+
+			return true
+		end
+
+		-- keeps grabbing the target again every time the character resets/respawns
+		local function GrabLoop(target, model, root, myToken)
+			local lastChar = nil
+			local failures = 0
+
+			while myToken == spinToken and target.Parent and model.Parent do
+				local tChar, tRoot, tHum = tbl12.Char(target)
+
+				if tChar and tRoot and tHum and tHum.Health > 0 and tChar ~= lastChar then
+					if HoldTarget(target, model, root, myToken, tChar, tRoot, tHum) then
+						lastChar = tChar
+						failures = 0
+					else
+						failures = failures + 1
+
+						if failures >= 6 then
+							lib:Notify("Blobman Spin: couldn't grab the target")
+							spinPaused = false
+							return
+						end
+
+						task.wait(0.3)
+					end
+				end
+
+				task.wait(0.1)
+			end
+
+			spinPaused = false
 		end
 
 		local function StartBlobSpin()
@@ -37549,6 +37620,10 @@ Escape Timer: %*]]
 			end
 
 			local myToken = spinToken
+
+			-- remember where you are, you go back there when the spin stops
+			local _, myStartRoot = tbl12.Char()
+			local home = myStartRoot and myStartRoot.CFrame
 
 			-- you need to be seated in the Blobman to grab with it
 			local model = GetSeatedBlobman()
@@ -37592,13 +37667,18 @@ Escape Timer: %*]]
 
 			-- the target is held up in the air at this point, the Blobman orbits around it
 			spinCenter = startRoot.Position + Vector3.new(0, options.BlobSpinHeight.Value, 0)
-
+			spinHome = home
 			spinModel = model
+			spinPaused = false
 			local angle = 0
 
 			tbl12.SetRuntimeConnection("BlobmanSpin", RunService.Heartbeat, true, function(dt)
 				if myToken ~= spinToken or not model.Parent or not target.Parent then
 					StopBlobSpin()
+					return
+				end
+
+				if spinPaused then
 					return
 				end
 
@@ -37611,7 +37691,7 @@ Escape Timer: %*]]
 				root.AssemblyAngularVelocity = Vector3.new(0, speed, 0)
 			end)
 
-			task.spawn(GrabLoop, target, model, myToken)
+			task.spawn(GrabLoop, target, model, root, myToken)
 		end
 
 		Spin:AddButton({
@@ -37637,9 +37717,9 @@ Escape Timer: %*]]
 
 		Spin:AddSlider("BlobSpinHeight", {
 			Text = "Hold Height",
-			Default = 15,
+			Default = 60,
 			Min = 0,
-			Max = 60,
+			Max = 150,
 			Rounding = 0,
 			Compact = true,
 		})
