@@ -37356,6 +37356,7 @@ Escape Timer: %*]]
 		local Spin = tbl15.Blobman:AddLeftGroupbox("Spin", "rotate-cw")
 		local spinToken = 0
 		local spinModel = nil
+		local spawnedByUs = false
 
 		local function StopBlobSpin()
 			spinToken += 1
@@ -37364,8 +37365,137 @@ Escape Timer: %*]]
 			local model = spinModel
 			spinModel = nil
 
-			if model and model.Parent then
+			if model and model.Parent and spawnedByUs then
 				tbl12.DestroyToy(model)
+			end
+
+			spawnedByUs = false
+		end
+
+		local function GetSeatedBlobman()
+			local _, _, humanoid = tbl12.Char()
+			local seat = humanoid and humanoid.SeatPart
+			local model = seat and seat.Parent
+
+			if model and model.Name == "CreatureBlobman" then
+				return model
+			end
+		end
+
+		-- Same grab routine as the Blobman "Kick" method, but the target is held in the
+		-- center (in the air) while the Blobman orbits around it.
+		local function GrabLoop(target, model, myToken)
+			local _, myRoot, myHum = tbl12.Char()
+			local tChar, tRoot, tHum = tbl12.Char(target)
+			if not (myRoot and myHum and tChar and tRoot and tHum) then
+				return
+			end
+
+			local comps
+			local waitStart = tick()
+			repeat
+				comps = tbl14.GetBlobmanComponents()
+				if not comps then
+					task.wait()
+				end
+			until comps or tick() - waitStart > 2 or myToken ~= spinToken
+
+			local rootAttachment = tRoot:FindFirstChild("RootAttachment")
+			if not (comps and comps.CreatureGrab and comps.CreatureDrop and comps.CreatureRelease and comps.RightWeld and comps.RightOri and rootAttachment) then
+				lib:Notify("Blobman Spin: couldn't find the Blobman grab parts")
+				return
+			end
+
+			comps.RightWeld.Enabled = false
+			comps.RightOri.Enabled = false
+
+			if not (tbl12.SNO(tRoot) or tbl14.Release(target)) then
+				comps.RightWeld.Enabled = true
+				lib:Notify("Blobman Spin: couldn't grab the target")
+				return
+			end
+
+			tHum.Sit = true
+			task.delay(0.5, function()
+				tHum.Sit = false
+			end)
+
+			local center = tRoot.Position
+			local align, orient = tbl12.CreateAlign(tRoot, true)
+			align.Position = center
+			orient.CFrame = tRoot.CFrame - tRoot.CFrame.Position
+
+			local firePlayerPart = tChar:FindFirstChild("FirePlayerPart")
+			local weldConstraint = firePlayerPart and firePlayerPart:FindFirstChild("WeldConstraint")
+
+			comps.CreatureDrop:FireServer(comps.RightWeld)
+			if comps.LeftWeld then
+				comps.CreatureDrop:FireServer(comps.LeftWeld)
+			end
+			task.wait(0.06)
+			rootAttachment.Parent = tChar
+
+			pcall(function()
+				while myToken == spinToken and target.Parent and tChar.Parent and tRoot.Parent and tHum.Parent and tHum.Health > 0 and model.Parent and myHum.SeatPart do
+					task.spawn(function()
+						tHum.RequiresNeck = false
+						tbl12.ToggleMotor6D(tChar, false, true)
+						tbl12.RepositionLimbs(tChar)
+					end)
+
+					task.spawn(tbl12.ToggleCollisions, tChar, false)
+					comps.RightOri.Enabled = false
+					comps.RightWeld.Enabled = false
+					comps.RightOri.Attachment0 = nil
+					comps.RightWeld.Attachment0 = nil
+					align.Position = center
+					tbl12.ResetVelocity(tRoot)
+
+					if tbl8.DeleteShurInBlobK then
+						task.spawn(tbl12.RemoveSticky, tChar)
+					end
+
+					if (tbl9.BKMethod or 1) == 1 then
+						comps.CreatureGrab:FireServer(nil, tRoot, comps.RightWeld)
+						task.wait()
+						comps.CreatureDrop:FireServer(comps.RightWeld)
+						task.wait()
+
+						if tbl8.NetworkOwnerInKick then
+							tbl12.Grab(tRoot)
+							tbl12.RNO(tRoot)
+						end
+					else
+						comps.CreatureGrab:FireServer(nil, tRoot, comps.RightWeld)
+						task.wait()
+						comps.CreatureRelease:FireServer(comps.RightWeld)
+						tbl12.Grab(tRoot)
+						task.spawn(tbl12.Ragdoll, tChar)
+
+						if weldConstraint and weldConstraint.Enabled then
+							tbl12.RNO(tRoot)
+						end
+
+						task.wait()
+					end
+				end
+			end)
+
+			-- cleanup
+			if rootAttachment and tRoot.Parent then
+				rootAttachment.Parent = tRoot
+			end
+			task.spawn(tbl12.ToggleMotor6D, tChar, true)
+			task.spawn(tbl12.ToggleCollisions, tChar, true)
+			if align then
+				align:Destroy()
+			end
+			if orient then
+				orient:Destroy()
+			end
+			if comps.RightWeld and comps.RightWeld.Parent then
+				comps.RightWeld.Attachment0 = nil
+				comps.RightWeld.Enabled = true
 			end
 		end
 
@@ -37379,21 +37509,38 @@ Escape Timer: %*]]
 			end
 
 			local myToken = spinToken
-			local model = tbl12.SpawnToy("CreatureBlobman")
+
+			-- you need to be seated in the Blobman to grab with it
+			local model = GetSeatedBlobman()
 			if not model then
-				lib:Notify("Blobman Spin: failed to spawn Blobman")
+				tbl14.Sit()
+				local sitStart = tick()
+				repeat
+					task.wait()
+					model = GetSeatedBlobman()
+				until model or tick() - sitStart > 3 or myToken ~= spinToken
+
+				if model then
+					spawnedByUs = true
+				end
+			end
+
+			if myToken ~= spinToken then
+				if model and spawnedByUs then
+					tbl12.DestroyToy(model)
+					spawnedByUs = false
+				end
 				return
 			end
 
-			-- Stop was pressed (or another spin started) while the Blobman was spawning
-			if myToken ~= spinToken then
-				tbl12.DestroyToy(model)
+			if not model then
+				lib:Notify("Blobman Spin: couldn't spawn/sit on the Blobman")
 				return
 			end
 
 			local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 			if not root then
-				tbl12.DestroyToy(model)
+				StopBlobSpin()
 				return
 			end
 
@@ -37420,6 +37567,8 @@ Escape Timer: %*]]
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.new(0, speed, 0)
 			end)
+
+			task.spawn(GrabLoop, target, model, myToken)
 		end
 
 		Spin:AddButton({
@@ -37445,7 +37594,7 @@ Escape Timer: %*]]
 
 		Spin:AddSlider("BlobSpinRadius", {
 			Text = "Spin Radius",
-			Default = 6,
+			Default = 8,
 			Min = 2,
 			Max = 25,
 			Rounding = 0,
