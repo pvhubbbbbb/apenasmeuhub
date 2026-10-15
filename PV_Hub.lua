@@ -37357,6 +37357,34 @@ Escape Timer: %*]]
 		local spinToken = 0
 		local spinModel = nil
 		local spawnedByUs = false
+		local spinCenter = Vector3.zero
+
+		-- remember the player that was picked LAST in the Target dropdown
+		local lastPicked = nil
+		local knownPicked = {}
+		local targetDropdown = options.BlobmanDropdown
+
+		if targetDropdown then
+			targetDropdown:OnChanged(function()
+				local value = targetDropdown.Value
+				if type(value) ~= "table" then
+					return
+				end
+
+				for player, on in pairs(value) do
+					if on and not knownPicked[player] then
+						lastPicked = player
+					end
+				end
+
+				knownPicked = {}
+				for player, on in pairs(value) do
+					if on then
+						knownPicked[player] = true
+					end
+				end
+			end)
+		end
 
 		local function StopBlobSpin()
 			spinToken += 1
@@ -37420,10 +37448,12 @@ Escape Timer: %*]]
 				tHum.Sit = false
 			end)
 
-			local center = tRoot.Position
+			local center = spinCenter
+			local orientCF = tRoot.CFrame - tRoot.CFrame.Position
+			tbl12.Teleport(tRoot, CFrame.new(center) * orientCF)
 			local align, orient = tbl12.CreateAlign(tRoot, true)
 			align.Position = center
-			orient.CFrame = tRoot.CFrame - tRoot.CFrame.Position
+			orient.CFrame = orientCF
 
 			local firePlayerPart = tChar:FindFirstChild("FirePlayerPart")
 			local weldConstraint = firePlayerPart and firePlayerPart:FindFirstChild("WeldConstraint")
@@ -37437,6 +37467,10 @@ Escape Timer: %*]]
 
 			pcall(function()
 				while myToken == spinToken and target.Parent and tChar.Parent and tRoot.Parent and tHum.Parent and tHum.Health > 0 and model.Parent and myHum.SeatPart do
+					if not tbl12.IsNetworkOwner(tRoot) then
+						tbl12.Grab(tRoot)
+					end
+
 					task.spawn(function()
 						tHum.RequiresNeck = false
 						tbl12.ToggleMotor6D(tChar, false, true)
@@ -37502,7 +37536,13 @@ Escape Timer: %*]]
 		local function StartBlobSpin()
 			StopBlobSpin()
 
-			local target = tbl12.GetTargets(false, tbl7.SelectedPlayersBlob)[1]
+			local target = nil
+			if lastPicked and lastPicked.Parent and tbl7.SelectedPlayersBlob[lastPicked] and not tbl12.IsProtectedPlayer(lastPicked) then
+				target = lastPicked
+			else
+				target = tbl12.GetTargets(false, tbl7.SelectedPlayersBlob)[1]
+			end
+
 			if not target then
 				lib:Notify("Blobman Spin: select a player first")
 				return
@@ -37544,6 +37584,15 @@ Escape Timer: %*]]
 				return
 			end
 
+			local _, startRoot = tbl12.Char(target)
+			if not startRoot then
+				StopBlobSpin()
+				return
+			end
+
+			-- the target is held up in the air at this point, the Blobman orbits around it
+			spinCenter = startRoot.Position + Vector3.new(0, options.BlobSpinHeight.Value, 0)
+
 			spinModel = model
 			local angle = 0
 
@@ -37553,17 +37602,11 @@ Escape Timer: %*]]
 					return
 				end
 
-				local _, targetRoot = tbl12.Char(target)
-				if not targetRoot then
-					return
-				end
-
 				local speed = options.BlobSpinSpeed.Value -- radians per second
 				local radius = options.BlobSpinRadius.Value
 				angle = (angle + speed * dt) % (math.pi * 2)
 
-				-- the target stays in the center, the Blobman orbits around it
-				root.CFrame = CFrame.new(targetRoot.Position) * CFrame.Angles(0, angle, 0) * CFrame.new(radius, 0, 0)
+				root.CFrame = CFrame.new(spinCenter) * CFrame.Angles(0, angle, 0) * CFrame.new(radius, 0, 0)
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.new(0, speed, 0)
 			end)
@@ -37588,6 +37631,15 @@ Escape Timer: %*]]
 			Default = 80,
 			Min = 10,
 			Max = 300,
+			Rounding = 0,
+			Compact = true,
+		})
+
+		Spin:AddSlider("BlobSpinHeight", {
+			Text = "Hold Height",
+			Default = 15,
+			Min = 0,
+			Max = 60,
 			Rounding = 0,
 			Compact = true,
 		})
