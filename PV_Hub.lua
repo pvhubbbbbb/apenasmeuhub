@@ -37353,6 +37353,107 @@ Escape Timer: %*]]
 	end
 
 	do
+		local Spin = tbl15.Blobman:AddLeftGroupbox("Spin", "rotate-cw")
+		local spinToken = 0
+		local spinModel = nil
+
+		local function StopBlobSpin()
+			spinToken += 1
+			tbl12.SetRuntimeConnection("BlobmanSpin", RunService.Heartbeat, false)
+
+			local model = spinModel
+			spinModel = nil
+
+			if model and model.Parent then
+				tbl12.DestroyToy(model)
+			end
+		end
+
+		local function StartBlobSpin()
+			StopBlobSpin()
+
+			local target = tbl12.GetTargets(false, tbl7.SelectedPlayersBlob)[1]
+			if not target then
+				lib:Notify("Blobman Spin: select a player first")
+				return
+			end
+
+			local myToken = spinToken
+			local model = tbl12.SpawnToy("CreatureBlobman")
+			if not model then
+				lib:Notify("Blobman Spin: failed to spawn Blobman")
+				return
+			end
+
+			-- Stop was pressed (or another spin started) while the Blobman was spawning
+			if myToken ~= spinToken then
+				tbl12.DestroyToy(model)
+				return
+			end
+
+			local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+			if not root then
+				tbl12.DestroyToy(model)
+				return
+			end
+
+			spinModel = model
+			local angle = 0
+
+			tbl12.SetRuntimeConnection("BlobmanSpin", RunService.Heartbeat, true, function(dt)
+				if myToken ~= spinToken or not model.Parent or not target.Parent then
+					StopBlobSpin()
+					return
+				end
+
+				local _, targetRoot = tbl12.Char(target)
+				if not targetRoot then
+					return
+				end
+
+				local speed = options.BlobSpinSpeed.Value -- radians per second
+				local radius = options.BlobSpinRadius.Value
+				angle = (angle + speed * dt) % (math.pi * 2)
+
+				-- the target stays in the center, the Blobman orbits around it
+				root.CFrame = CFrame.new(targetRoot.Position) * CFrame.Angles(0, angle, 0) * CFrame.new(radius, 0, 0)
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.new(0, speed, 0)
+			end)
+		end
+
+		Spin:AddButton({
+			Text = "Blobman Spin",
+			Func = function()
+				task.spawn(StartBlobSpin)
+			end,
+		})
+
+		Spin:AddButton({
+			Text = "Stop Blobman Spin",
+			Func = StopBlobSpin,
+		})
+
+		Spin:AddSlider("BlobSpinSpeed", {
+			Text = "Spin Speed",
+			Default = 80,
+			Min = 10,
+			Max = 300,
+			Rounding = 0,
+			Compact = true,
+		})
+
+		Spin:AddSlider("BlobSpinRadius", {
+			Text = "Spin Radius",
+			Default = 6,
+			Min = 2,
+			Max = 25,
+			Rounding = 0,
+			Compact = true,
+		})
+	end
+
+	do
 		local Settings = tbl15.Blobman:AddRightGroupbox("Settings", "settings")
 
 		Settings:AddToggle("AutoSeatBlobman", {
